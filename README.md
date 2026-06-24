@@ -132,5 +132,33 @@ Conclusión
 
 El microservicio de pacientes cumple con los requerimientos de gestión de datos clínicos, implementando buenas prácticas de desarrollo como separación de responsabilidades, tolerancia a fallos y despliegue mediante contenedores Docker.
 
+## Despliegue en AWS ECS Fargate
+
+### Infraestructura
+- Cluster: cuidado-seguro-cluster
+- Puerto: 8082
+- Imagen: karipilo/ms-pacientes:latest
+- Región: us-east-1
+
+### CI/CD
+Pipeline automático con GitHub Actions:
+1. Build & Test
+2. Docker Build & Push → Docker Hub
+3. Deploy → AWS ECS Fargate
+
+### Variables de entorno
+| Variable | Descripción |
+|----------|-------------|
+| SPRING_PROFILES_ACTIVE | docker |
+| SPRING_DATASOURCE_URL | URL RDS MySQL |
+| SPRING_DATASOURCE_USERNAME | admin |
+| SPRING_DATASOURCE_PASSWORD | clave RDS |
+
+### Base de datos
+- Motor: MySQL 8 en AWS RDS
+- Host: bd.ce2dl2fmudwp.us-east-1.rds.amazonaws.com
+- Puerto: 3306
+- Base de datos: cuidado_seguro_pacientes
+
 
 
