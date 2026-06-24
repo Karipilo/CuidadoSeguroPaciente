@@ -66,7 +66,7 @@ com.pacientes.pacientes
 | PUT | /pacientes/{id} | Actualizar paciente |
 | DELETE | /pacientes/{id} | Eliminar paciente |
 
----
+----------
 
 ## Ejemplo de petición (POST)
 
