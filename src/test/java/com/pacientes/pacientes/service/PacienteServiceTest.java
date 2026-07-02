@@ -6,6 +6,8 @@ import static org.mockito.ArgumentMatchers.any;
 // Importaciones para Mockito
 import static org.mockito.Mockito.*;
 
+import java.io.IOException;
+import java.lang.reflect.Field;
 import java.time.LocalDate;
 import java.util.Arrays;
 import java.util.List;
@@ -20,6 +22,16 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.mockito.Spy;
+
+// Importaciones Spring necesarias para probar validarToken()
+import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
+import org.springframework.test.web.client.MockRestServiceServer;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withException;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
+import org.springframework.web.client.RestTemplate;
 
 // Modelo y repositorio
 import com.pacientes.pacientes.model.Paciente;
@@ -386,6 +398,137 @@ void deberiaRetornarTrueEnFallbackToken() {
             );
 
     assertTrue(resultado);
+}
+
+/*
+ * ---------------------------------------------------------
+ * Pruebas del método REAL validarToken().
+ *
+ * Se usa MockRestServiceServer (utilidad oficial de Spring
+ * para probar código que usa RestTemplate) en lugar de un
+ * mock de Mockito sobre RestTemplate.exchange(): al ser un
+ * método varargs con varias sobrecargas, mockearlo con
+ * matchers resultó poco confiable. MockRestServiceServer
+ * intercepta la petición HTTP real (a nivel del
+ * ClientHttpRequestFactory) sobre la MISMA instancia de
+ * RestTemplate que usa el servicio, así que no hay dudas
+ * sobre qué objeto se está probando.
+ * ---------------------------------------------------------
+ */
+
+/*
+ * Crea una instancia nueva de PacienteService (sin spy), le
+ * asigna una URL de auth fija por reflexión (AUTH_URL normalmente
+ * lo inyecta Spring con @Value, pero aquí no hay contexto de
+ * Spring), y devuelve tanto el servicio como un
+ * MockRestServiceServer enganchado a su RestTemplate real.
+ */
+private PacienteService crearServicioConUrlDeAuth(String urlAuth) throws Exception {
+
+    PacienteService servicioReal = new PacienteService();
+
+    Field campoUrl = PacienteService.class.getDeclaredField("AUTH_URL");
+    campoUrl.setAccessible(true);
+    campoUrl.set(servicioReal, urlAuth);
+
+    return servicioReal;
+}
+
+private MockRestServiceServer crearServidorSimulado(PacienteService servicioReal) throws Exception {
+
+    Field campoRestTemplate = PacienteService.class.getDeclaredField("restTemplate");
+    campoRestTemplate.setAccessible(true);
+    RestTemplate restTemplateReal = (RestTemplate) campoRestTemplate.get(servicioReal);
+
+    return MockRestServiceServer.createServer(restTemplateReal);
+}
+
+private static final String URL_AUTH_PRUEBA = "http://auth-service/validar";
+
+@Test
+void deberiaValidarTokenExitosamenteCuandoAuthRespondeOk() throws Exception {
+
+    PacienteService servicioReal = crearServicioConUrlDeAuth(URL_AUTH_PRUEBA);
+    MockRestServiceServer servidor = crearServidorSimulado(servicioReal);
+
+    servidor.expect(requestTo(URL_AUTH_PRUEBA))
+            .andExpect(method(HttpMethod.GET))
+            .andRespond(withStatus(HttpStatus.OK).body("OK"));
+
+    boolean resultado = servicioReal.validarToken("Bearer token123");
+
+    assertTrue(resultado);
+    servidor.verify();
+}
+
+@Test
+void deberiaValidarTokenNuloSinAgregarAuthorization() throws Exception {
+
+    PacienteService servicioReal = crearServicioConUrlDeAuth(URL_AUTH_PRUEBA);
+    MockRestServiceServer servidor = crearServidorSimulado(servicioReal);
+
+    servidor.expect(requestTo(URL_AUTH_PRUEBA))
+            .andExpect(method(HttpMethod.GET))
+            .andRespond(withStatus(HttpStatus.OK).body("OK"));
+
+    // Token nulo -> no debe agregar header Authorization,
+    // pero igual debe consultar el servicio de auth.
+    boolean resultado = servicioReal.validarToken(null);
+
+    assertTrue(resultado);
+    servidor.verify();
+}
+
+@Test
+void deberiaRetornarFalseCuandoAuthNoRespondeOk() throws Exception {
+
+    PacienteService servicioReal = crearServicioConUrlDeAuth(URL_AUTH_PRUEBA);
+    MockRestServiceServer servidor = crearServidorSimulado(servicioReal);
+
+    // 202 Accepted: un 2xx que NO es 200 OK, así que RestTemplate
+    // no lo trata como error y sí retorna el ResponseEntity.
+    servidor.expect(requestTo(URL_AUTH_PRUEBA))
+            .andExpect(method(HttpMethod.GET))
+            .andRespond(withStatus(HttpStatus.ACCEPTED));
+
+    boolean resultado = servicioReal.validarToken("token123");
+
+    assertFalse(resultado);
+    servidor.verify();
+}
+
+@Test
+void deberiaRetornarFalseCuandoAuthLanzaHttpClientErrorException() throws Exception {
+
+    PacienteService servicioReal = crearServicioConUrlDeAuth(URL_AUTH_PRUEBA);
+    MockRestServiceServer servidor = crearServidorSimulado(servicioReal);
+
+    // 401: RestTemplate lo convierte automáticamente en
+    // HttpClientErrorException al recibirlo.
+    servidor.expect(requestTo(URL_AUTH_PRUEBA))
+            .andExpect(method(HttpMethod.GET))
+            .andRespond(withStatus(HttpStatus.UNAUTHORIZED));
+
+    boolean resultado = servicioReal.validarToken("token_invalido");
+
+    assertFalse(resultado);
+    servidor.verify();
+}
+
+@Test
+void deberiaRetornarFalseCuandoAuthLanzaErrorGenerico() throws Exception {
+
+    PacienteService servicioReal = crearServicioConUrlDeAuth(URL_AUTH_PRUEBA);
+    MockRestServiceServer servidor = crearServidorSimulado(servicioReal);
+
+    servidor.expect(requestTo(URL_AUTH_PRUEBA))
+            .andExpect(method(HttpMethod.GET))
+            .andRespond(withException(new IOException("Error de conexión")));
+
+    boolean resultado = servicioReal.validarToken("token123");
+
+    assertFalse(resultado);
+    servidor.verify();
 }
 
 }
